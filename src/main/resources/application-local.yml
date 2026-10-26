@@ -1,0 +1,20 @@
+eureka:
+  client:
+    enabled: false
+
+spring:
+  cloud:
+    discovery:
+      client:
+        simple:
+          instances:
+            account-service:
+              - uri: http://localhost:8081
+            charge-fee-service:
+              - uri: http://localhost:8085
+            otp-service:
+              - uri: http://localhost:8086
+            core-banking-service:
+              - uri: http://localhost:8084
+            notification-service:
+              - uri: http://localhost:8087

@@ -1,0 +1,37 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: fund-transfer-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/fund_transfer_db}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+  instance:
+    prefer-ip-address: true
+
+app:
+  # Eureka service names, resolved by the load balancer. They must match each service's spring.application.name.
+  services:
+      account: ${ACCOUNT_SERVICE_URL:http://account-service}
+      charge-fee: ${CHARGE_FEE_SERVICE_URL:http://charge-fee-service}
+      otp: ${OTP_SERVICE_URL:http://otp-service}
+      cbs: ${CBS_SERVICE_URL:http://core-banking-service}
+      notification: ${NOTIFICATION_SERVICE_URL:http://notification-service}
+
+  transfer:
+    pending-expiry-minutes: 10
+    max-pending-per-user: 5
+    # OTP and notification emails go to this address (the supervisor's demo requirement).
+    # Set TRANSFER_NOTIFY_EMAIL=USER to send to each logged-in user's own email instead.
+    notify-email: ${TRANSFER_NOTIFY_EMAIL:2227jahid@gmail.com}
