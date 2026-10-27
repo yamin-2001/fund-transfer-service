@@ -46,17 +46,37 @@ public class CbsClientImpl implements CbsClient {
     @Override
     public CbsPostingResult postTransfer(String referenceId, String fromAccount, String toAccount,
                                          BigDecimal amount, BigDecimal fee) {
-        Map<String, Object> body = Map.of(
+        return post("/internal/cbs/transfers", referenceId, Map.of(
                 "referenceId", referenceId,
                 "fromAccountNumber", fromAccount,
                 "toAccountNumber", toAccount,
                 "amount", amount,
                 "fee", fee
-        );
+        ));
+    }
 
+    @Override
+    public CbsPostingResult postDeposit(String referenceId, String accountNumber, BigDecimal amount) {
+        return post("/internal/cbs/deposits", referenceId, Map.of(
+                "referenceId", referenceId,
+                "accountNumber", accountNumber,
+                "amount", amount
+        ));
+    }
+
+    @Override
+    public CbsPostingResult postWithdrawal(String referenceId, String accountNumber, BigDecimal amount) {
+        return post("/internal/cbs/withdrawals", referenceId, Map.of(
+                "referenceId", referenceId,
+                "accountNumber", accountNumber,
+                "amount", amount
+        ));
+    }
+
+    private CbsPostingResult post(String uri, String referenceId, Map<String, Object> body) {
         try {
             ClientPayloads.LedgerPosting posting = restClient.post()
-                    .uri("/internal/cbs/transfers")
+                    .uri(uri)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(body)
                     .retrieve()

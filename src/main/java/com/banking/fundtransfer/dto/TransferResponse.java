@@ -5,6 +5,7 @@ import java.time.LocalDateTime;
 
 public record TransferResponse(
         String transferId,
+        String type,
         String fromAccountNumber,
         String toAccountNumber,
         BigDecimal amount,

@@ -8,4 +8,8 @@ public interface CbsClient {
 
     CbsPostingResult postTransfer(String referenceId, String fromAccount, String toAccount,
                                   BigDecimal amount, BigDecimal fee);
+
+    CbsPostingResult postDeposit(String referenceId, String accountNumber, BigDecimal amount);
+
+    CbsPostingResult postWithdrawal(String referenceId, String accountNumber, BigDecimal amount);
 }

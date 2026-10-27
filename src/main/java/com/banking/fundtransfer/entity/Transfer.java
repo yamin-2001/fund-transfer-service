@@ -18,6 +18,10 @@ public class Transfer {
     @Column(nullable = false)
     private Long userId;
 
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private TransferType type;
+
     @Column(nullable = false, length = 50)
     private String fromAccountNumber;
 
@@ -64,6 +68,9 @@ public class Transfer {
 
     public Long getUserId() { return userId; }
     public void setUserId(Long userId) { this.userId = userId; }
+
+    public TransferType getType() { return type == null ? TransferType.TRANSFER : type; }
+    public void setType(TransferType type) { this.type = type; }
 
     public String getFromAccountNumber() { return fromAccountNumber; }
     public void setFromAccountNumber(String fromAccountNumber) { this.fromAccountNumber = fromAccountNumber; }

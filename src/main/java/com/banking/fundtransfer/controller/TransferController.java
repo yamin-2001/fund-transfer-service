@@ -1,5 +1,6 @@
 package com.banking.fundtransfer.controller;
 
+import com.banking.fundtransfer.dto.CashTransactionRequest;
 import com.banking.fundtransfer.dto.ConfirmTransferRequest;
 import com.banking.fundtransfer.dto.ConfirmTransferResponse;
 import com.banking.fundtransfer.dto.InitiateTransferRequest;
@@ -34,6 +35,22 @@ public class TransferController {
             @RequestHeader("X-User-Email") String userEmail,
             @Valid @RequestBody InitiateTransferRequest request) {
         return ResponseEntity.ok(transferService.initiate(userId, userEmail, request));
+    }
+
+    @PostMapping("/deposit")
+    public ResponseEntity<InitiateTransferResponse> deposit(
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader("X-User-Email") String userEmail,
+            @Valid @RequestBody CashTransactionRequest request) {
+        return ResponseEntity.ok(transferService.initiateDeposit(userId, userEmail, request));
+    }
+
+    @PostMapping("/withdraw")
+    public ResponseEntity<InitiateTransferResponse> withdraw(
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader("X-User-Email") String userEmail,
+            @Valid @RequestBody CashTransactionRequest request) {
+        return ResponseEntity.ok(transferService.initiateWithdrawal(userId, userEmail, request));
     }
 
     @PostMapping("/{transferId}/confirm")

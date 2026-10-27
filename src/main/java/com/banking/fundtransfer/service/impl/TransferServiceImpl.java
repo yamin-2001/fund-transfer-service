@@ -38,11 +38,14 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import com.banking.fundtransfer.dto.CashTransactionRequest;
+import com.banking.fundtransfer.entity.TransferType;
 
 @Service
 public class TransferServiceImpl implements TransferService {
 
     private static final Logger log = LoggerFactory.getLogger(TransferServiceImpl.class);
+    private static final String CASH = "CASH";
 
     private final TransferRepository transferRepository;
     private final AccountClient accountClient;
@@ -123,6 +126,7 @@ public class TransferServiceImpl implements TransferService {
         transfer.setTransferId("TXN-" + UUID.randomUUID().toString().replace("-", "")
             .substring(0, 16).toUpperCase());
         transfer.setUserId(userId);
+        transfer.setType(TransferType.TRANSFER);
         transfer.setFromAccountNumber(from);
         transfer.setToAccountNumber(to);
         transfer.setAmount(amount);
@@ -145,6 +149,81 @@ public class TransferServiceImpl implements TransferService {
                 transfer.getTransferId(), fee, totalDebit, "PENDING_OTP", "OTP sent to your email");
     }
 
+    // ------------------------------------------------------- deposit and withdraw
+
+    @Override
+    public InitiateTransferResponse initiateDeposit(Long userId, String userEmail,
+                                                    CashTransactionRequest request) {
+        return initiateCash(userId, userEmail, request, TransferType.DEPOSIT);
+    }
+
+    @Override
+    public InitiateTransferResponse initiateWithdrawal(Long userId, String userEmail,
+                                                       CashTransactionRequest request) {
+        return initiateCash(userId, userEmail, request, TransferType.WITHDRAWAL);
+    }
+
+    private InitiateTransferResponse initiateCash(Long userId, String userEmail,
+                                                  CashTransactionRequest request, TransferType type) {
+        boolean deposit = type == TransferType.DEPOSIT;
+        String number = request.accountNumber().trim();
+        BigDecimal amount = request.amount().setScale(2);
+
+        LocalDateTime now = LocalDateTime.now();
+        long pending = transferRepository.countByUserIdAndStatusAndCreatedAtAfter(
+                userId, TransferStatus.PENDING_OTP, now.minusMinutes(properties.pendingExpiryMinutes()));
+        if (pending >= properties.maxPendingPerUser()) {
+            throw new TooManyPendingTransfersException(
+                    "You have too many unconfirmed transfers. Confirm or wait for them to expire");
+        }
+
+        // Ownership comes from Account Service, never from the client.
+        AccountInfo account = accountClient.findByNumbers(List.of(number)).get(number);
+        if (account == null) {
+            throw new AccountNotFoundException("Account not found: " + number);
+        }
+        if (!userId.equals(account.userId())) {
+            throw new NotAccountOwnerException("You do not own this account");
+        }
+        if (!"ACTIVE".equals(account.status())) {
+            throw new InvalidTransferException("Account is not active");
+        }
+
+        // Early check so the user is not sent an OTP for a withdrawal that cannot work.
+        // CBS checks again when it posts, so this is only a courtesy.
+        if (!deposit && cbsClient.getBalance(number).compareTo(amount) < 0) {
+            throw new InsufficientBalanceException("Insufficient balance");
+        }
+
+        BigDecimal noFee = BigDecimal.ZERO.setScale(2);
+
+        Transfer transfer = new Transfer();
+        transfer.setTransferId("TXN-" + UUID.randomUUID().toString().replace("-", "")
+                .substring(0, 16).toUpperCase());
+        transfer.setUserId(userId);
+        transfer.setType(type);
+        transfer.setFromAccountNumber(deposit ? CASH : number);
+        transfer.setToAccountNumber(deposit ? number : CASH);
+        transfer.setAmount(amount);
+        transfer.setFee(noFee);
+        transfer.setStatus(TransferStatus.PENDING_OTP);
+        transfer.setOtpVerified(false);
+        transferRepository.save(transfer);
+
+        String otpId;
+        try {
+            otpId = otpClient.sendOtp(userId, notificationEmail(userEmail), transfer.getTransferId());
+        } catch (DownstreamUnavailableException ex) {
+            transferRepository.finish(transfer.getTransferId(), TransferStatus.FAILED,
+                    "Could not send OTP", null, LocalDateTime.now());
+            throw ex;
+        }
+        transferRepository.setOtpId(transfer.getTransferId(), otpId, LocalDateTime.now());
+
+        // For a deposit, totalDebit is the amount that will be credited to the account.
+        return new InitiateTransferResponse(
+                transfer.getTransferId(), noFee, amount, "PENDING_OTP", "OTP sent to your email");
+    }
     // ------------------------------------------------------------------- confirm
 
     @Override
@@ -256,14 +335,23 @@ public class TransferServiceImpl implements TransferService {
                 "We could not confirm the result yet. Press Confirm again in a moment, "
                         + "or check History. Do not start a new transfer.");
     }
-
     private CbsPostingResult postToCbs(Transfer transfer) {
-        return cbsClient.postTransfer(
-            transfer.getTransferId(),
-            transfer.getFromAccountNumber(),
-            transfer.getToAccountNumber(),
-            transfer.getAmount(),
-            transfer.getFee());
+        return switch (transfer.getType()) {
+            case DEPOSIT -> cbsClient.postDeposit(
+                    transfer.getTransferId(),
+                    transfer.getToAccountNumber(),
+                    transfer.getAmount());
+            case WITHDRAWAL -> cbsClient.postWithdrawal(
+                    transfer.getTransferId(),
+                    transfer.getFromAccountNumber(),
+                    transfer.getAmount());
+            case TRANSFER -> cbsClient.postTransfer(
+                    transfer.getTransferId(),
+                    transfer.getFromAccountNumber(),
+                    transfer.getToAccountNumber(),
+                    transfer.getAmount(),
+                    transfer.getFee());
+        };
     }
 
     // ---------------------------------------------------------------------- list
@@ -271,15 +359,16 @@ public class TransferServiceImpl implements TransferService {
     @Override
     public List<TransferResponse> list(Long userId) {
         return transferRepository.findTop100ByUserIdOrderByCreatedAtDesc(userId).stream()
-            .map(t -> new TransferResponse(
-        t.getTransferId(),
-        t.getFromAccountNumber(),
-        t.getToAccountNumber(),
-        t.getAmount(),
-        t.getFee(),
-        t.getStatus().name(),
-        t.getCreatedAt()))
-        .toList();
+                .map(t -> new TransferResponse(
+                        t.getTransferId(),
+                        t.getType().name(),
+                        t.getFromAccountNumber(),
+                        t.getToAccountNumber(),
+                        t.getAmount(),
+                        t.getFee(),
+                        t.getStatus().name(),
+                        t.getCreatedAt()))
+                .toList();
     }
 
     // ------------------------------------------------------------------- helpers
