@@ -9,6 +9,7 @@ import com.banking.fundtransfer.client.ClientPayloads;
 import com.banking.fundtransfer.client.NotificationClient;
 import com.banking.fundtransfer.client.OtpClient;
 import com.banking.fundtransfer.config.TransferProperties;
+import com.banking.fundtransfer.dto.CashTransactionRequest;
 import com.banking.fundtransfer.dto.ConfirmTransferRequest;
 import com.banking.fundtransfer.dto.ConfirmTransferResponse;
 import com.banking.fundtransfer.dto.InitiateTransferRequest;
@@ -16,6 +17,7 @@ import com.banking.fundtransfer.dto.InitiateTransferResponse;
 import com.banking.fundtransfer.dto.TransferResponse;
 import com.banking.fundtransfer.entity.Transfer;
 import com.banking.fundtransfer.entity.TransferStatus;
+import com.banking.fundtransfer.entity.TransferType;
 import com.banking.fundtransfer.exception.AccountNotFoundException;
 import com.banking.fundtransfer.exception.DownstreamUnavailableException;
 import com.banking.fundtransfer.exception.InsufficientBalanceException;
@@ -38,8 +40,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import com.banking.fundtransfer.dto.CashTransactionRequest;
-import com.banking.fundtransfer.entity.TransferType;
 
 @Service
 public class TransferServiceImpl implements TransferService {
@@ -56,12 +56,12 @@ public class TransferServiceImpl implements TransferService {
     private final TransferProperties properties;
 
     public TransferServiceImpl(TransferRepository transferRepository,
-    AccountClient accountClient,
-    ChargeFeeClient chargeFeeClient,
-    OtpClient otpClient,
-    CbsClient cbsClient,
-    NotificationClient notificationClient,
-    TransferProperties properties) {
+                               AccountClient accountClient,
+                               ChargeFeeClient chargeFeeClient,
+                               OtpClient otpClient,
+                               CbsClient cbsClient,
+                               NotificationClient notificationClient,
+                               TransferProperties properties) {
         this.transferRepository = transferRepository;
         this.accountClient = accountClient;
         this.chargeFeeClient = chargeFeeClient;
@@ -83,13 +83,7 @@ public class TransferServiceImpl implements TransferService {
             throw new InvalidTransferException("Cannot transfer to the same account");
         }
 
-        LocalDateTime now = LocalDateTime.now();
-        long pending = transferRepository.countByUserIdAndStatusAndCreatedAtAfter(
-                userId, TransferStatus.PENDING_OTP, now.minusMinutes(properties.pendingExpiryMinutes()));
-        if (pending >= properties.maxPendingPerUser()) {
-            throw new TooManyPendingTransfersException(
-                    "You have too many unconfirmed transfers. Confirm or wait for them to expire");
-        }
+        checkPendingLimit(userId);
 
         // Ownership and account checks come from Account Service, never from the client.
         Map<String, AccountInfo> accounts = accountClient.findByNumbers(List.of(from, to));
@@ -122,28 +116,12 @@ public class TransferServiceImpl implements TransferService {
             throw new InsufficientBalanceException("Insufficient balance");
         }
 
-        Transfer transfer = new Transfer();
-        transfer.setTransferId("TXN-" + UUID.randomUUID().toString().replace("-", "")
-            .substring(0, 16).toUpperCase());
-        transfer.setUserId(userId);
-        transfer.setType(TransferType.TRANSFER);
-        transfer.setFromAccountNumber(from);
-        transfer.setToAccountNumber(to);
-        transfer.setAmount(amount);
-        transfer.setFee(fee);
+        Transfer transfer = newTransfer(userId, TransferType.TRANSFER, from, to, amount, fee);
         transfer.setStatus(TransferStatus.PENDING_OTP);
         transfer.setOtpVerified(false);
         transferRepository.save(transfer);
 
-        String otpId;
-        try {
-            otpId = otpClient.sendOtp(userId, notificationEmail(userEmail), transfer.getTransferId());
-        } catch (DownstreamUnavailableException ex) {
-            transferRepository.finish(transfer.getTransferId(), TransferStatus.FAILED,
-                "Could not send OTP", null, LocalDateTime.now());
-            throw ex;
-        }
-        transferRepository.setOtpId(transfer.getTransferId(), otpId, LocalDateTime.now());
+        sendOtpOrFail(transfer, userId, userEmail);
 
         return new InitiateTransferResponse(
                 transfer.getTransferId(), fee, totalDebit, "PENDING_OTP", "OTP sent to your email");
@@ -151,93 +129,74 @@ public class TransferServiceImpl implements TransferService {
 
     // ------------------------------------------------------- deposit and withdraw
 
+    /**
+     * Deposit: no OTP. Ownership is checked, then the money is posted to CBS right away.
+     * The transfer is saved as PROCESSING with otpVerified = true, so if CBS does not
+     * answer it ends up UNCONFIRMED and Confirm can retry it safely (same referenceId).
+     */
     @Override
     public InitiateTransferResponse initiateDeposit(Long userId, String userEmail,
                                                     CashTransactionRequest request) {
-        return initiateCash(userId, userEmail, request, TransferType.DEPOSIT);
+        String number = request.accountNumber().trim();
+        BigDecimal amount = request.amount().setScale(2);
+        BigDecimal noFee = BigDecimal.ZERO.setScale(2);
+
+        AccountInfo account = loadOwnedActiveAccount(userId, number);
+
+        Transfer transfer = newTransfer(userId, TransferType.DEPOSIT, CASH, number, amount, noFee);
+        transfer.setStatus(TransferStatus.PROCESSING);
+        transfer.setOtpVerified(true);
+        transferRepository.save(transfer);
+
+        ConfirmTransferResponse result = post(transfer, userEmail);
+
+        String message = "SUCCESS".equals(result.status()) ? "Deposit completed" : result.message();
+        return new InitiateTransferResponse(
+                transfer.getTransferId(), noFee, amount, result.status(), message);
     }
 
+    /** Withdrawal: still needs an OTP. */
     @Override
     public InitiateTransferResponse initiateWithdrawal(Long userId, String userEmail,
                                                        CashTransactionRequest request) {
-        return initiateCash(userId, userEmail, request, TransferType.WITHDRAWAL);
-    }
-
-    private InitiateTransferResponse initiateCash(Long userId, String userEmail,
-                                                  CashTransactionRequest request, TransferType type) {
-        boolean deposit = type == TransferType.DEPOSIT;
         String number = request.accountNumber().trim();
         BigDecimal amount = request.amount().setScale(2);
+        BigDecimal noFee = BigDecimal.ZERO.setScale(2);
 
-        LocalDateTime now = LocalDateTime.now();
-        long pending = transferRepository.countByUserIdAndStatusAndCreatedAtAfter(
-                userId, TransferStatus.PENDING_OTP, now.minusMinutes(properties.pendingExpiryMinutes()));
-        if (pending >= properties.maxPendingPerUser()) {
-            throw new TooManyPendingTransfersException(
-                    "You have too many unconfirmed transfers. Confirm or wait for them to expire");
-        }
-
-        // Ownership comes from Account Service, never from the client.
-        AccountInfo account = accountClient.findByNumbers(List.of(number)).get(number);
-        if (account == null) {
-            throw new AccountNotFoundException("Account not found: " + number);
-        }
-        if (!userId.equals(account.userId())) {
-            throw new NotAccountOwnerException("You do not own this account");
-        }
-        if (!"ACTIVE".equals(account.status())) {
-            throw new InvalidTransferException("Account is not active");
-        }
+        checkPendingLimit(userId);
+        loadOwnedActiveAccount(userId, number);
 
         // Early check so the user is not sent an OTP for a withdrawal that cannot work.
         // CBS checks again when it posts, so this is only a courtesy.
-        if (!deposit && cbsClient.getBalance(number).compareTo(amount) < 0) {
+        if (cbsClient.getBalance(number).compareTo(amount) < 0) {
             throw new InsufficientBalanceException("Insufficient balance");
         }
 
-        BigDecimal noFee = BigDecimal.ZERO.setScale(2);
-
-        Transfer transfer = new Transfer();
-        transfer.setTransferId("TXN-" + UUID.randomUUID().toString().replace("-", "")
-                .substring(0, 16).toUpperCase());
-        transfer.setUserId(userId);
-        transfer.setType(type);
-        transfer.setFromAccountNumber(deposit ? CASH : number);
-        transfer.setToAccountNumber(deposit ? number : CASH);
-        transfer.setAmount(amount);
-        transfer.setFee(noFee);
+        Transfer transfer = newTransfer(userId, TransferType.WITHDRAWAL, number, CASH, amount, noFee);
         transfer.setStatus(TransferStatus.PENDING_OTP);
         transfer.setOtpVerified(false);
         transferRepository.save(transfer);
 
-        String otpId;
-        try {
-            otpId = otpClient.sendOtp(userId, notificationEmail(userEmail), transfer.getTransferId());
-        } catch (DownstreamUnavailableException ex) {
-            transferRepository.finish(transfer.getTransferId(), TransferStatus.FAILED,
-                    "Could not send OTP", null, LocalDateTime.now());
-            throw ex;
-        }
-        transferRepository.setOtpId(transfer.getTransferId(), otpId, LocalDateTime.now());
+        sendOtpOrFail(transfer, userId, userEmail);
 
-        // For a deposit, totalDebit is the amount that will be credited to the account.
         return new InitiateTransferResponse(
                 transfer.getTransferId(), noFee, amount, "PENDING_OTP", "OTP sent to your email");
     }
+
     // ------------------------------------------------------------------- confirm
 
     @Override
     public ConfirmTransferResponse confirm(Long userId, String userEmail, String transferId,
-        ConfirmTransferRequest request) {
+                                           ConfirmTransferRequest request) {
         Transfer transfer = transferRepository.findByTransferIdAndUserId(transferId.trim(), userId)
-        .orElseThrow(() -> new TransferNotFoundException("Transfer not found"));
+                .orElseThrow(() -> new TransferNotFoundException("Transfer not found"));
 
         return switch (transfer.getStatus()) {
             case SUCCESS -> new ConfirmTransferResponse(
-            transfer.getTransferId(), "SUCCESS", "Transfer completed");
+                    transfer.getTransferId(), "SUCCESS", "Transfer completed");
             case FAILED -> new ConfirmTransferResponse(
-            transfer.getTransferId(), "FAILED",
-            transfer.getFailureReason() == null ? "Transfer failed" : transfer.getFailureReason());
+                    transfer.getTransferId(), "FAILED",
+                    transfer.getFailureReason() == null ? "Transfer failed" : transfer.getFailureReason());
             case EXPIRED -> throw new TransferExpiredException("Transfer expired, please start a new one");
             case PROCESSING -> throw new TransferInProgressException("Transfer is already being processed");
             case PENDING_OTP -> confirmWithOtp(transfer, userEmail, request.otp());
@@ -258,7 +217,7 @@ public class TransferServiceImpl implements TransferService {
         if (transfer.getCreatedAt().isBefore(
                 LocalDateTime.now().minusMinutes(properties.pendingExpiryMinutes()))) {
             transferRepository.transition(id, userId, TransferStatus.PENDING_OTP,
-                TransferStatus.EXPIRED, LocalDateTime.now());
+                    TransferStatus.EXPIRED, LocalDateTime.now());
             throw new TransferExpiredException("Transfer expired, please start a new one");
         }
 
@@ -274,13 +233,13 @@ public class TransferServiceImpl implements TransferService {
         } catch (DownstreamUnavailableException ex) {
             // OTP outcome unknown: put it back so the user can try again.
             transferRepository.transition(id, userId, TransferStatus.PROCESSING,
-                TransferStatus.PENDING_OTP, LocalDateTime.now());
+                    TransferStatus.PENDING_OTP, LocalDateTime.now());
             throw ex;
         }
 
         if (!verification.verified()) {
             transferRepository.transition(id, userId, TransferStatus.PROCESSING,
-                TransferStatus.PENDING_OTP, LocalDateTime.now());
+                    TransferStatus.PENDING_OTP, LocalDateTime.now());
             throw new OtpRejectedException(verification.message());
         }
 
@@ -313,9 +272,9 @@ public class TransferServiceImpl implements TransferService {
 
         if (result.outcome() == CbsPostingResult.Outcome.POSTED) {
             transferRepository.finish(id, TransferStatus.SUCCESS, null,
-                result.transactionId(), LocalDateTime.now());
+                    result.transactionId(), LocalDateTime.now());
             notificationClient.sendTransferSuccess(recipient, id, transfer.getFromAccountNumber(),
-                transfer.getToAccountNumber(), transfer.getAmount(), transfer.getFee());
+                    transfer.getToAccountNumber(), transfer.getAmount(), transfer.getFee());
             return new ConfirmTransferResponse(id, "SUCCESS", "Transfer completed");
         }
 
@@ -323,18 +282,19 @@ public class TransferServiceImpl implements TransferService {
             String reason = truncate(result.message());
             transferRepository.finish(id, TransferStatus.FAILED, reason, null, LocalDateTime.now());
             notificationClient.sendTransferFailed(recipient, transfer.getFromAccountNumber(),
-                transfer.getToAccountNumber(), transfer.getAmount(), reason);
+                    transfer.getToAccountNumber(), transfer.getAmount(), reason);
             return new ConfirmTransferResponse(id, "FAILED", reason);
         }
 
         // Still unknown: do NOT mark it failed, the money may have moved.
         transferRepository.transition(id, transfer.getUserId(), TransferStatus.PROCESSING,
-            TransferStatus.UNCONFIRMED, LocalDateTime.now());
+                TransferStatus.UNCONFIRMED, LocalDateTime.now());
         log.warn("Transfer {} left UNCONFIRMED, CBS outcome unknown", id);
         throw new ResultUnconfirmedException(
                 "We could not confirm the result yet. Press Confirm again in a moment, "
                         + "or check History. Do not start a new transfer.");
     }
+
     private CbsPostingResult postToCbs(Transfer transfer) {
         return switch (transfer.getType()) {
             case DEPOSIT -> cbsClient.postDeposit(
@@ -372,6 +332,57 @@ public class TransferServiceImpl implements TransferService {
     }
 
     // ------------------------------------------------------------------- helpers
+
+    private void checkPendingLimit(Long userId) {
+        long pending = transferRepository.countByUserIdAndStatusAndCreatedAtAfter(
+                userId, TransferStatus.PENDING_OTP,
+                LocalDateTime.now().minusMinutes(properties.pendingExpiryMinutes()));
+        if (pending >= properties.maxPendingPerUser()) {
+            throw new TooManyPendingTransfersException(
+                    "You have too many unconfirmed transfers. Confirm or wait for them to expire");
+        }
+    }
+
+    /** Ownership comes from Account Service, never from the client. */
+    private AccountInfo loadOwnedActiveAccount(Long userId, String number) {
+        AccountInfo account = accountClient.findByNumbers(List.of(number)).get(number);
+        if (account == null) {
+            throw new AccountNotFoundException("Account not found: " + number);
+        }
+        if (!userId.equals(account.userId())) {
+            throw new NotAccountOwnerException("You do not own this account");
+        }
+        if (!"ACTIVE".equals(account.status())) {
+            throw new InvalidTransferException("Account is not active");
+        }
+        return account;
+    }
+
+    private Transfer newTransfer(Long userId, TransferType type, String from, String to,
+                                 BigDecimal amount, BigDecimal fee) {
+        Transfer transfer = new Transfer();
+        transfer.setTransferId("TXN-" + UUID.randomUUID().toString().replace("-", "")
+                .substring(0, 16).toUpperCase());
+        transfer.setUserId(userId);
+        transfer.setType(type);
+        transfer.setFromAccountNumber(from);
+        transfer.setToAccountNumber(to);
+        transfer.setAmount(amount);
+        transfer.setFee(fee);
+        return transfer;
+    }
+
+    private void sendOtpOrFail(Transfer transfer, Long userId, String userEmail) {
+        String otpId;
+        try {
+            otpId = otpClient.sendOtp(userId, notificationEmail(userEmail), transfer.getTransferId());
+        } catch (DownstreamUnavailableException ex) {
+            transferRepository.finish(transfer.getTransferId(), TransferStatus.FAILED,
+                    "Could not send OTP", null, LocalDateTime.now());
+            throw ex;
+        }
+        transferRepository.setOtpId(transfer.getTransferId(), otpId, LocalDateTime.now());
+    }
 
     private String notificationEmail(String userEmail) {
         String configured = properties.notifyEmail();
