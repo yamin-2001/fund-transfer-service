@@ -5,13 +5,25 @@ spring:
   application:
     name: fund-transfer-service
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/fund_transfer_db}
-    username: ${DB_USERNAME:postgres}
-    password: ${DB_PASSWORD:postgres}
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/fund_transfer_db}
+    username: ${DB_USERNAME:banking_admin}
+    password: ${DB_PASSWORD:postgre2188}
   jpa:
     hibernate:
       ddl-auto: update
     open-in-view: false
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.block.ms: 3000
+        request.timeout.ms: 5000
+        delivery.timeout.ms: 10000
 
 eureka:
   client:
@@ -35,3 +47,7 @@ app:
     # OTP and notification emails go to this address (the supervisor's demo requirement).
     # Set TRANSFER_NOTIFY_EMAIL=USER to send to each logged-in user's own email instead.
     notify-email: ${TRANSFER_NOTIFY_EMAIL:2227jahid@gmail.com}
+
+  outbox:
+    poll-interval-ms: 1000
+    retention-days: 7

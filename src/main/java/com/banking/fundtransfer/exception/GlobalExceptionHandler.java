@@ -43,9 +43,16 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.BAD_REQUEST, "Malformed request body");
     }
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleOther(Exception ex) {
-        return build(HttpStatus.INTERNAL_SERVER_ERROR, "Something went wrong");
+        log.error("Unexpected error in fund-transfer-service", ex);
+        return build(
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                "Something went wrong"
+        );
     }
 
     private ResponseEntity<ErrorResponse> build(HttpStatus status, String message) {

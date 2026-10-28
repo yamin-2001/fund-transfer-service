@@ -34,6 +34,7 @@ import com.banking.fundtransfer.service.TransferService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import com.banking.fundtransfer.events.TransferOutcomeRecorder;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -52,7 +53,7 @@ public class TransferServiceImpl implements TransferService {
     private final ChargeFeeClient chargeFeeClient;
     private final OtpClient otpClient;
     private final CbsClient cbsClient;
-    private final NotificationClient notificationClient;
+    private final TransferOutcomeRecorder outcomeRecorder;
     private final TransferProperties properties;
 
     public TransferServiceImpl(TransferRepository transferRepository,
@@ -60,14 +61,14 @@ public class TransferServiceImpl implements TransferService {
                                ChargeFeeClient chargeFeeClient,
                                OtpClient otpClient,
                                CbsClient cbsClient,
-                               NotificationClient notificationClient,
+                               TransferOutcomeRecorder outcomeRecorder,
                                TransferProperties properties) {
         this.transferRepository = transferRepository;
         this.accountClient = accountClient;
         this.chargeFeeClient = chargeFeeClient;
         this.otpClient = otpClient;
         this.cbsClient = cbsClient;
-        this.notificationClient = notificationClient;
+        this.outcomeRecorder = outcomeRecorder;
         this.properties = properties;
     }
 
@@ -271,22 +272,18 @@ public class TransferServiceImpl implements TransferService {
         String recipient = notificationEmail(userEmail);
 
         if (result.outcome() == CbsPostingResult.Outcome.POSTED) {
-            transferRepository.finish(id, TransferStatus.SUCCESS, null,
-                    result.transactionId(), LocalDateTime.now());
-            notificationClient.sendTransferSuccess(recipient, id, transfer.getFromAccountNumber(),
-                    transfer.getToAccountNumber(), transfer.getAmount(), transfer.getFee());
+            // One database transaction: final status plus the event for the notification.
+            outcomeRecorder.recordCompleted(transfer, result.transactionId(), recipient);
             return new ConfirmTransferResponse(id, "SUCCESS", "Transfer completed");
         }
 
         if (result.outcome() == CbsPostingResult.Outcome.REJECTED) {
             String reason = truncate(result.message());
-            transferRepository.finish(id, TransferStatus.FAILED, reason, null, LocalDateTime.now());
-            notificationClient.sendTransferFailed(recipient, transfer.getFromAccountNumber(),
-                    transfer.getToAccountNumber(), transfer.getAmount(), reason);
+            outcomeRecorder.recordFailed(transfer, reason, recipient);
             return new ConfirmTransferResponse(id, "FAILED", reason);
         }
 
-        // Still unknown: do NOT mark it failed, the money may have moved.
+        // Still unknown: do NOT mark it failed, the money may have moved. No event is written yet.
         transferRepository.transition(id, transfer.getUserId(), TransferStatus.PROCESSING,
                 TransferStatus.UNCONFIRMED, LocalDateTime.now());
         log.warn("Transfer {} left UNCONFIRMED, CBS outcome unknown", id);
