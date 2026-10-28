@@ -12,6 +12,17 @@ spring:
     hibernate:
       ddl-auto: update
     open-in-view: false
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.block.ms: 3000
+        request.timeout.ms: 5000
+        delivery.timeout.ms: 10000
 
 eureka:
   client:
@@ -22,6 +33,7 @@ eureka:
 
 app:
   # Eureka service names, resolved by the load balancer. They must match each service's spring.application.name.
+
   services:
       account: ${ACCOUNT_SERVICE_URL:http://account-service}
       charge-fee: ${CHARGE_FEE_SERVICE_URL:http://charge-fee-service}
@@ -35,3 +47,6 @@ app:
     # OTP and notification emails go to this address (the supervisor's demo requirement).
     # Set TRANSFER_NOTIFY_EMAIL=USER to send to each logged-in user's own email instead.
     notify-email: ${TRANSFER_NOTIFY_EMAIL:2227jahid@gmail.com}
+  outbox:
+    poll-interval-ms: 1000
+    retention-days: 7
