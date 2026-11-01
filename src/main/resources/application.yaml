@@ -67,7 +67,7 @@ app:
     retention-days: 7
 management:
   server:
-    port: 18083
+    port: 18082
   endpoints:
     web:
       exposure:
