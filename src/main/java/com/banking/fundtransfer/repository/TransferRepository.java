@@ -2,13 +2,16 @@ package com.banking.fundtransfer.repository;
 
 import com.banking.fundtransfer.entity.Transfer;
 import com.banking.fundtransfer.entity.TransferStatus;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -69,4 +72,20 @@ public interface TransferRepository extends JpaRepository<Transfer, String> {
                     @Param("to") TransferStatus to,
                     @Param("cutoff") LocalDateTime cutoff,
                     @Param("now") LocalDateTime now);
+
+    // ---------------------------------------------------------------- saga
+
+    /** Locks the row until the end of the transaction, so events of one transfer are handled one at a time. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select t from Transfer t where t.transferId = :id")
+    Optional<Transfer> findByIdForUpdate(@Param("id") String id);
+
+    long countByUserIdAndFlowAndStatusInAndCreatedAtAfter(Long userId, String flow,
+                                                          Collection<TransferStatus> statuses,
+                                                          LocalDateTime after);
+
+    List<Transfer> findTop100ByFlowAndStatusAndStateEnteredAtBeforeOrderByStateEnteredAtAsc(
+            String flow, TransferStatus status, LocalDateTime cutoff);
+
+    long countByFlowAndStatus(String flow, TransferStatus status);
 }

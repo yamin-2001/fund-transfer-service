@@ -201,6 +201,7 @@ public class TransferServiceImpl implements TransferService {
             case PROCESSING -> throw new TransferInProgressException("Transfer is already being processed");
             case PENDING_OTP -> confirmWithOtp(transfer, userEmail, request.otp());
             case UNCONFIRMED -> retryPosting(transfer, userEmail);
+            default -> throw new InvalidTransferException("This transfer cannot be confirmed in its current state");
         };
     }
 

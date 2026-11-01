@@ -1,6 +1,6 @@
 package com.banking.fundtransfer.repository;
 
-import com.banking.fundtransfer.entity.OutboxEvent;
+import com.banking.fundtransfer.messaging.OutboxEvent;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;

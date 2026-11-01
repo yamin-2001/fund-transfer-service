@@ -1,6 +1,5 @@
 package com.banking.fundtransfer.events;
 
-import com.banking.fundtransfer.entity.OutboxEvent;
 import com.banking.fundtransfer.entity.Transfer;
 import com.banking.fundtransfer.entity.TransferStatus;
 import com.banking.fundtransfer.repository.OutboxEventRepository;
@@ -75,6 +74,6 @@ public class TransferOutcomeRecorder {
             throw new IllegalStateException("Could not serialize the transfer event", ex);
         }
 
-        outboxRepository.save(new OutboxEvent(eventId, topic, transfer.getTransferId(), payload));
+//        outboxRepository.save(new OutboxEvent(eventId, topic, transfer.getTransferId(), payload));
     }
 }

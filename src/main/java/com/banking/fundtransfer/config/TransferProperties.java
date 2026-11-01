@@ -6,5 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record TransferProperties(
         int pendingExpiryMinutes,
         int maxPendingPerUser,
-        String notifyEmail
+        String notifyEmail,
+        boolean depositRequiresOtp,
+        boolean sagaEnabled
 ) {}

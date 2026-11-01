@@ -2,25 +2,32 @@ server:
   port: 8082
 
 spring:
+
   application:
     name: fund-transfer-service
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/fund_transfer_db}
-    username: ${DB_USERNAME:postgres}
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/fund_transfer_db}
+    username: ${DB_USERNAME:banking_admin}
     password: ${DB_PASSWORD:postgres}
   jpa:
     hibernate:
       ddl-auto: update
     open-in-view: false
   kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: fund-transfer-service
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+    listener:
+      ack-mode: record
+      concurrency: 3
     producer:
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.apache.kafka.common.serialization.StringSerializer
       acks: all
       properties:
         enable.idempotence: true
-        max.block.ms: 3000
+        linger.ms: 0
+        max.block.ms: 5000
         request.timeout.ms: 5000
         delivery.timeout.ms: 10000
 
@@ -32,7 +39,6 @@ eureka:
     prefer-ip-address: true
 
 app:
-  # Eureka service names, resolved by the load balancer. They must match each service's spring.application.name.
 
   services:
       account: ${ACCOUNT_SERVICE_URL:http://account-service}
@@ -40,13 +46,33 @@ app:
       otp: ${OTP_SERVICE_URL:http://otp-service}
       cbs: ${CBS_SERVICE_URL:http://core-banking-service}
       notification: ${NOTIFICATION_SERVICE_URL:http://notification-service}
-
   transfer:
     pending-expiry-minutes: 10
     max-pending-per-user: 5
-    # OTP and notification emails go to this address (the supervisor's demo requirement).
-    # Set TRANSFER_NOTIFY_EMAIL=USER to send to each logged-in user's own email instead.
     notify-email: ${TRANSFER_NOTIFY_EMAIL:2227jahid@gmail.com}
+    deposit-requires-otp: false
+    saga-enabled: ${TRANSFER_SAGA_ENABLED:false}
+  saga:
+      step-timeout-seconds: 30
+      max-resends: 3
+      reversal-max-resends: 5
+      otp-issue-timeout-seconds: 60
+      otp-resend-cooldown-seconds: 30
+      sweep-interval-ms: 5000
+  messaging:
+      producer-name: fund-transfer-service
+      relay-interval-ms: 1000
   outbox:
     poll-interval-ms: 1000
     retention-days: 7
+management:
+  server:
+    port: 18083
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true

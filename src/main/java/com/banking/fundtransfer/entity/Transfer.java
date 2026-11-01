@@ -35,7 +35,7 @@ public class Transfer {
     private BigDecimal fee;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 20)
+    @Column(nullable = false, length = 30)
     private TransferStatus status;
 
     @Column(length = 255)
@@ -56,11 +56,37 @@ public class Transfer {
     @Column(nullable = false)
     private LocalDateTime updatedAt;
 
+    @Column(length = 10)
+    private String flow;
+
+    @Column(length = 150)
+    private String userEmail;
+
+    private Boolean sameOwner;
+
+    @Column(length = 3)
+    private String currency;
+
+    @Column(length = 50)
+    private String failureCode;
+
+    private Integer stepAttempts;
+
+    private LocalDateTime stateEnteredAt;
+
+    private LocalDateTime otpExpiresAt;
+
+    private LocalDateTime lastOtpRequestedAt;
+
     @PrePersist
     void onCreate() {
         LocalDateTime now = LocalDateTime.now();
         this.createdAt = now;
         this.updatedAt = now;
+    }
+    @PreUpdate
+    void onUpdate() {
+        this.updatedAt = LocalDateTime.now();
     }
 
     public String getTransferId() { return transferId; }
@@ -101,4 +127,45 @@ public class Transfer {
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
+
+    public boolean isSaga() { return "SAGA".equals(flow); }
+
+    /** Enters a new state: the timeout clock and the resend counter start again. */
+    public void moveTo(TransferStatus next) {
+        this.status = next;
+        this.stateEnteredAt = LocalDateTime.now();
+        this.stepAttempts = 0;
+    }
+
+    /** Counts one resend of the current step's command and restarts the timeout clock. */
+    public void recordResend() {
+        this.stepAttempts = getStepAttempts() + 1;
+        this.stateEnteredAt = LocalDateTime.now();
+    }
+
+    public int getStepAttempts() { return stepAttempts == null ? 0 : stepAttempts; }
+
+    public String getFlow() { return flow; }
+    public void setFlow(String flow) { this.flow = flow; }
+
+    public String getUserEmail() { return userEmail; }
+    public void setUserEmail(String userEmail) { this.userEmail = userEmail; }
+
+    public Boolean getSameOwner() { return sameOwner; }
+    public void setSameOwner(Boolean sameOwner) { this.sameOwner = sameOwner; }
+
+    public String getCurrency() { return currency; }
+    public void setCurrency(String currency) { this.currency = currency; }
+
+    public String getFailureCode() { return failureCode; }
+    public void setFailureCode(String failureCode) { this.failureCode = failureCode; }
+
+    public LocalDateTime getStateEnteredAt() { return stateEnteredAt; }
+    public void setStateEnteredAt(LocalDateTime stateEnteredAt) { this.stateEnteredAt = stateEnteredAt; }
+
+    public LocalDateTime getOtpExpiresAt() { return otpExpiresAt; }
+    public void setOtpExpiresAt(LocalDateTime otpExpiresAt) { this.otpExpiresAt = otpExpiresAt; }
+
+    public LocalDateTime getLastOtpRequestedAt() { return lastOtpRequestedAt; }
+    public void setLastOtpRequestedAt(LocalDateTime lastOtpRequestedAt) { this.lastOtpRequestedAt = lastOtpRequestedAt; }
 }
