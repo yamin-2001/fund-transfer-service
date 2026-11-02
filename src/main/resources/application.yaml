@@ -51,7 +51,7 @@ app:
     max-pending-per-user: 5
     notify-email: ${TRANSFER_NOTIFY_EMAIL:2227jahid@gmail.com}
     deposit-requires-otp: false
-    saga-enabled: ${TRANSFER_SAGA_ENABLED:false}
+    saga-enabled: ${TRANSFER_SAGA_ENABLED:true}
   saga:
       step-timeout-seconds: 30
       max-resends: 3
