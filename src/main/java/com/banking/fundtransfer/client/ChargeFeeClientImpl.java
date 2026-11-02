@@ -7,7 +7,6 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientException;
 
 import java.math.BigDecimal;
 import java.util.Map;
@@ -40,7 +39,7 @@ public class ChargeFeeClientImpl implements ChargeFeeClient {
                     .body(body)
                     .retrieve()
                     .body(ClientPayloads.FeeCalculation.class);
-        } catch (RestClientException | IllegalStateException ex) {
+        } catch (RuntimeException ex) {
             log.error("Charge fee service call failed: {}", ex.getMessage());
             throw new DownstreamUnavailableException("Fee service is unavailable, please try again");
         }

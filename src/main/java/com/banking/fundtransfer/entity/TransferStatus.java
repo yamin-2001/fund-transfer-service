@@ -14,6 +14,7 @@ public enum TransferStatus {
     // the saga flow
     VALIDATING,
     FEE_PENDING,
+    BALANCE_CHECKING,
     OTP_PENDING,
     AWAITING_OTP,
     WITHDRAWING,

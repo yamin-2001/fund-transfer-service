@@ -8,7 +8,7 @@ spring:
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5433/fund_transfer_db}
     username: ${DB_USERNAME:banking_admin}
-    password: ${DB_PASSWORD:postgres}
+    password: ${DB_PASSWORD:postgre2188}
   jpa:
     hibernate:
       ddl-auto: update
@@ -27,7 +27,11 @@ spring:
       properties:
         enable.idempotence: true
         linger.ms: 0
-        max.block.ms: 5000
+        # max.block.ms must be at least as long as delivery.timeout.ms, and
+        # the publisher waits longer than both. Otherwise a publish can be
+        # reported as failed while the message is still on its way, and the
+        # retry sends it a second time.
+        max.block.ms: 15000
         request.timeout.ms: 5000
         delivery.timeout.ms: 10000
 
@@ -49,7 +53,9 @@ app:
   transfer:
     pending-expiry-minutes: 10
     max-pending-per-user: 5
-    notify-email: ${TRANSFER_NOTIFY_EMAIL:2227jahid@gmail.com}
+    # USER means: send the OTP to the address of the user who started the
+    # transaction. Any other value sends every OTP to that one address.
+    notify-email: ${TRANSFER_NOTIFY_EMAIL:USER}
     deposit-requires-otp: false
     saga-enabled: ${TRANSFER_SAGA_ENABLED:true}
   saga:

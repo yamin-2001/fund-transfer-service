@@ -1,5 +1,6 @@
 package com.banking.fundtransfer.messaging.consumer;
 
+import com.banking.fundtransfer.messaging.payload.BalanceCheckedEvent;
 import com.banking.fundtransfer.messaging.payload.CashAccountValidatedEvent;
 import com.banking.fundtransfer.messaging.EventEnvelope;
 import com.banking.fundtransfer.messaging.EventParser;
@@ -55,6 +56,10 @@ public class SagaEventsConsumer {
                     parser.payload(envelope, FailureEvent.class));
             case "FeeCalculated" -> engine.onFeeCalculated(envelope,
                     parser.payload(envelope, FeeCalculatedEvent.class));
+            case "BalanceChecked" -> engine.onBalanceChecked(envelope,
+                    parser.payload(envelope, BalanceCheckedEvent.class));
+            case "BalanceRejected" -> engine.onBalanceRejected(envelope,
+                    parser.payload(envelope, FailureEvent.class));
             case "OtpIssued" -> engine.onOtpIssued(envelope,
                     parser.payload(envelope, OtpIssuedEvent.class));
             case "OtpDeliveryFailed" -> engine.onOtpDeliveryFailed(envelope,

@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static com.banking.fundtransfer.entity.TransferStatus.AWAITING_OTP;
+import static com.banking.fundtransfer.entity.TransferStatus.BALANCE_CHECKING;
 import static com.banking.fundtransfer.entity.TransferStatus.COMPLETED;
 import static com.banking.fundtransfer.entity.TransferStatus.DEPOSITING;
 import static com.banking.fundtransfer.entity.TransferStatus.EXPIRED;
@@ -32,7 +33,8 @@ public final class TransferStateMachine {
     static {
         Map<TransferStatus, Set<TransferStatus>> transfer = new EnumMap<>(TransferStatus.class);
         allow(transfer, VALIDATING, FEE_PENDING, FAILED);
-        allow(transfer, FEE_PENDING, OTP_PENDING, FAILED);
+        allow(transfer, FEE_PENDING, BALANCE_CHECKING, FAILED);
+        allow(transfer, BALANCE_CHECKING, OTP_PENDING, FAILED);
         allow(transfer, OTP_PENDING, AWAITING_OTP, FAILED);
         allow(transfer, AWAITING_OTP, WITHDRAWING, EXPIRED, FAILED);
         allow(transfer, WITHDRAWING, DEPOSITING, FAILED, RECONCILIATION_REQUIRED);
@@ -53,7 +55,8 @@ public final class TransferStateMachine {
 
         // A cash withdrawal always needs the OTP, and has one ledger step.
         Map<TransferStatus, Set<TransferStatus>> withdrawal = new EnumMap<>(TransferStatus.class);
-        allow(withdrawal, VALIDATING, OTP_PENDING, FAILED);
+        allow(withdrawal, VALIDATING, BALANCE_CHECKING, FAILED);
+        allow(withdrawal, BALANCE_CHECKING, OTP_PENDING, FAILED);
         allow(withdrawal, OTP_PENDING, AWAITING_OTP, FAILED);
         allow(withdrawal, AWAITING_OTP, WITHDRAWING, EXPIRED, FAILED);
         allow(withdrawal, WITHDRAWING, COMPLETED, FAILED, RECONCILIATION_REQUIRED);

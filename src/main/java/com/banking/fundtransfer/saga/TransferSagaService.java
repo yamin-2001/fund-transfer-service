@@ -27,7 +27,7 @@ import java.util.Set;
 public class TransferSagaService {
 
     private static final Set<TransferStatus> BEFORE_PAYMENT = EnumSet.of(
-            TransferStatus.VALIDATING, TransferStatus.FEE_PENDING,
+            TransferStatus.VALIDATING, TransferStatus.FEE_PENDING, TransferStatus.BALANCE_CHECKING,
             TransferStatus.OTP_PENDING, TransferStatus.AWAITING_OTP);
 
     private final TransferRepository repository;
@@ -95,7 +95,7 @@ public class TransferSagaService {
         Transfer transfer = find(userId, transferId);
 
         switch (transfer.getStatus()) {
-            case VALIDATING, FEE_PENDING -> throw new TransferInProgressException(
+            case VALIDATING, FEE_PENDING, BALANCE_CHECKING -> throw new TransferInProgressException(
                     "Your request is still being checked, please wait a moment");
             case OTP_PENDING -> throw new TransferInProgressException(
                     "The one-time password is still being sent, please wait a moment");
@@ -187,6 +187,7 @@ public class TransferSagaService {
         return switch (t.getStatus()) {
             case VALIDATING -> type == TransferType.TRANSFER ? "Checking your accounts..." : "Checking your account...";
             case FEE_PENDING -> "Calculating the fee...";
+            case BALANCE_CHECKING -> "Checking your balance...";
             case OTP_PENDING -> "Sending your one-time password...";
             case AWAITING_OTP -> "Enter the one-time password we sent to your email";
             case WITHDRAWING -> "Taking the money from your account...";

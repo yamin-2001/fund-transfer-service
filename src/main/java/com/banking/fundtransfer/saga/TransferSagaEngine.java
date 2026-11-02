@@ -13,7 +13,9 @@ import com.banking.fundtransfer.messaging.EventPublisher;
 import com.banking.fundtransfer.messaging.InvalidEventException;
 import com.banking.fundtransfer.messaging.ProcessedEventGuard;
 import com.banking.fundtransfer.messaging.TopicNames;
+import com.banking.fundtransfer.messaging.payload.BalanceCheckedEvent;
 import com.banking.fundtransfer.messaging.payload.CalculateFeePayload;
+import com.banking.fundtransfer.messaging.payload.CheckBalancePayload;
 import com.banking.fundtransfer.messaging.payload.CashAccountValidatedEvent;
 import com.banking.fundtransfer.messaging.payload.DepositCompletedEvent;
 import com.banking.fundtransfer.messaging.payload.DepositPayload;
@@ -32,6 +34,7 @@ import com.banking.fundtransfer.messaging.payload.ValidateTransferPayload;
 import com.banking.fundtransfer.messaging.payload.WithdrawCompletedEvent;
 import com.banking.fundtransfer.messaging.payload.WithdrawPayload;
 import com.banking.fundtransfer.repository.TransferRepository;
+import com.banking.fundtransfer.service.NotificationRecipient;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,9 +61,9 @@ public class TransferSagaEngine {
 
     /** The states the timeout sweeper looks at. */
     public static final List<TransferStatus> WATCHED = List.of(
-            TransferStatus.VALIDATING, TransferStatus.FEE_PENDING, TransferStatus.OTP_PENDING,
-            TransferStatus.AWAITING_OTP, TransferStatus.WITHDRAWING, TransferStatus.DEPOSITING,
-            TransferStatus.REVERSING);
+            TransferStatus.VALIDATING, TransferStatus.FEE_PENDING, TransferStatus.BALANCE_CHECKING,
+            TransferStatus.OTP_PENDING, TransferStatus.AWAITING_OTP, TransferStatus.WITHDRAWING,
+            TransferStatus.DEPOSITING, TransferStatus.REVERSING);
 
     private static final String HANDLER = "saga-events";
     private static final String CASH = "CASH";
@@ -180,17 +183,25 @@ public class TransferSagaEngine {
 
         transfer.setCurrency(event.currency());
 
-        if (transfer.getType() == TransferType.DEPOSIT && !transferProperties.depositRequiresOtp()) {
-            // A deposit needs no OTP: the request itself is the authorization.
-            transfer.setOtpVerified(true);
-            move(transfer, TransferStatus.DEPOSITING);
-            publishDeposit(transfer, envelope.eventId());
+        if (transfer.getType() == TransferType.DEPOSIT) {
+            // A deposit adds money, so there is no balance to check.
+            if (!transferProperties.depositRequiresOtp()) {
+                // A deposit needs no OTP: the request itself is the authorization.
+                transfer.setOtpVerified(true);
+                move(transfer, TransferStatus.DEPOSITING);
+                publishDeposit(transfer, envelope.eventId());
+                return;
+            }
+            transfer.setLastOtpRequestedAt(LocalDateTime.now());
+            move(transfer, TransferStatus.OTP_PENDING);
+            publishIssueOtp(transfer, envelope.eventId());
             return;
         }
 
-        transfer.setLastOtpRequestedAt(LocalDateTime.now());
-        move(transfer, TransferStatus.OTP_PENDING);
-        publishIssueOtp(transfer, envelope.eventId());
+        // The balance is checked before the code is asked for, so the user is
+        // never sent a code for a transaction that cannot succeed.
+        move(transfer, TransferStatus.BALANCE_CHECKING);
+        publishCheckBalance(transfer, envelope.eventId());
     }
 
     @Transactional
@@ -224,9 +235,41 @@ public class TransferSagaEngine {
         }
 
         transfer.setFee(fee.setScale(2));
+
+        // The total debit is only known now that the fee is known, so this is
+        // the first moment the balance can be checked against it.
+        move(transfer, TransferStatus.BALANCE_CHECKING);
+        publishCheckBalance(transfer, envelope.eventId());
+    }
+
+    @Transactional
+    public void onBalanceChecked(EventEnvelope envelope, BalanceCheckedEvent event) {
+        Transfer transfer = open(envelope, event.transferId()).orElse(null);
+        if (transfer == null) {
+            return;
+        }
+        if (transfer.getStatus() != TransferStatus.BALANCE_CHECKING) {
+            ignored(envelope);
+            return;
+        }
+
         transfer.setLastOtpRequestedAt(LocalDateTime.now());
         move(transfer, TransferStatus.OTP_PENDING);
         publishIssueOtp(transfer, envelope.eventId());
+    }
+
+    @Transactional
+    public void onBalanceRejected(EventEnvelope envelope, FailureEvent event) {
+        Transfer transfer = open(envelope, event.transferId()).orElse(null);
+        if (transfer == null) {
+            return;
+        }
+        if (transfer.getStatus() != TransferStatus.BALANCE_CHECKING) {
+            ignored(envelope);
+            return;
+        }
+        // Nothing was moved, and no code was sent, so this is only shown on the screen.
+        fail(transfer, event.reasonCode(), event.reason(), envelope.eventId());
     }
 
     @Transactional
@@ -478,6 +521,10 @@ public class TransferSagaEngine {
                     () -> publishFee(transfer, null),
                     () -> fail(transfer, "FEE_TIMEOUT",
                             "The fee could not be calculated in time. Please try again", null));
+            case BALANCE_CHECKING -> retry(transfer, sagaProperties.maxResends(),
+                    () -> publishCheckBalance(transfer, null),
+                    () -> fail(transfer, "BALANCE_CHECK_TIMEOUT",
+                            "Your balance could not be checked in time. Please try again", null));
             case OTP_PENDING -> fail(transfer, "OTP_TIMEOUT",
                     "The one-time password could not be sent in time. Please try again", null);
             case AWAITING_OTP -> {
@@ -590,6 +637,23 @@ public class TransferSagaEngine {
                         t.getToAccountNumber(), t.getAmount(), Boolean.TRUE.equals(t.getSameOwner())));
     }
 
+    /**
+     * Asks the banking core whether the account can cover the debit.
+     *
+     * <p>The fee of a cash transaction is zero, so the required amount is the
+     * amount itself. The check moves no money, so CBS answers every resend
+     * again with the balance of that moment instead of keeping the first
+     * answer.
+     */
+    private void publishCheckBalance(Transfer t, String causationId) {
+        BigDecimal fee = t.getType() == TransferType.TRANSFER
+                ? (t.getFee() == null ? ZERO : t.getFee())
+                : ZERO;
+        events.publish(TopicNames.CBS_COMMANDS, t.getTransferId(), "CheckBalance", t.getTransferId(),
+                causationId, new CheckBalancePayload(t.getTransferId(),
+                        t.getTransferId() + ":CHECK_BALANCE", ownAccount(t), t.getAmount(), fee));
+    }
+
     private void publishIssueOtp(Transfer t, String causationId) {
         events.publish(TopicNames.OTP_COMMANDS, t.getTransferId(), "IssueOtp", t.getTransferId(),
                 causationId, new IssueOtpPayload(t.getTransferId(), t.getUserId(), recipient(t), "TRANSFER"));
@@ -630,11 +694,7 @@ public class TransferSagaEngine {
 
     /** The demo requirement: emails go to the configured address, or to the user when set to USER. */
     private String recipient(Transfer t) {
-        String configured = transferProperties.notifyEmail();
-        if (configured == null || configured.isBlank() || "USER".equalsIgnoreCase(configured.trim())) {
-            return t.getUserEmail();
-        }
-        return configured.trim();
+        return NotificationRecipient.resolve(transferProperties.notifyEmail(), t.getUserEmail());
     }
 
     // ------------------------------------------------------------------- helpers

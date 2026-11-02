@@ -8,7 +8,6 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientException;
 
 import java.math.BigDecimal;
 import java.util.Map;
@@ -32,7 +31,7 @@ public class CbsClientImpl implements CbsClient {
                     .uri("/internal/cbs/accounts/{number}/balance", accountNumber)
                     .retrieve()
                     .body(ClientPayloads.LedgerBalance.class);
-        } catch (RestClientException | IllegalStateException ex) {
+        } catch (RuntimeException ex) {
             log.error("CBS balance lookup failed: {}", ex.getMessage());
             throw new DownstreamUnavailableException("Banking core is unavailable, please try again");
         }
@@ -93,7 +92,7 @@ public class CbsClientImpl implements CbsClient {
                 return CbsPostingResult.unknown();
             }
             return CbsPostingResult.rejected(extractMessage(ex));
-        } catch (RestClientException | IllegalStateException ex) {
+        } catch (RuntimeException ex) {
             // Timeout, connection problem, or CBS error: the money may or may not have moved.
             log.error("CBS posting outcome unknown for {}: {}", referenceId, ex.getMessage());
             return CbsPostingResult.unknown();

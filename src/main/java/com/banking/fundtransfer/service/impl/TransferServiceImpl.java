@@ -30,6 +30,7 @@ import com.banking.fundtransfer.exception.TransferExpiredException;
 import com.banking.fundtransfer.exception.TransferInProgressException;
 import com.banking.fundtransfer.exception.TransferNotFoundException;
 import com.banking.fundtransfer.repository.TransferRepository;
+import com.banking.fundtransfer.service.NotificationRecipient;
 import com.banking.fundtransfer.service.TransferService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -382,11 +383,7 @@ public class TransferServiceImpl implements TransferService {
     }
 
     private String notificationEmail(String userEmail) {
-        String configured = properties.notifyEmail();
-        if (configured == null || configured.isBlank() || configured.equalsIgnoreCase("USER")) {
-            return userEmail;
-        }
-        return configured.trim();
+        return NotificationRecipient.resolve(properties.notifyEmail(), userEmail);
     }
 
     private String truncate(String text) {

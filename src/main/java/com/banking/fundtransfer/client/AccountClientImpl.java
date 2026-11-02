@@ -7,7 +7,6 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientException;
 
 import java.util.Collection;
 import java.util.List;
@@ -41,7 +40,7 @@ public class AccountClientImpl implements AccountClient {
             }
             return accounts.stream()
                     .collect(Collectors.toMap(AccountInfo::accountNumber, Function.identity()));
-        } catch (RestClientException | IllegalStateException ex) {
+        } catch (RuntimeException ex) {
             log.error("Account service call failed: {}", ex.getMessage());
             throw new DownstreamUnavailableException("Account service is unavailable, please try again");
         }

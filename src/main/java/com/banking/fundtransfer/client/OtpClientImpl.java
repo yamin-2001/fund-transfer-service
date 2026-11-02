@@ -7,7 +7,6 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientException;
 
 import java.util.Map;
 
@@ -39,7 +38,7 @@ public class OtpClientImpl implements OtpClient {
                     .body(body)
                     .retrieve()
                     .body(ClientPayloads.OtpIssued.class);
-        } catch (RestClientException | IllegalStateException ex) {
+        } catch (RuntimeException ex) {
             log.error("OTP send failed: {}", ex.getMessage());
             throw new DownstreamUnavailableException("Could not send the OTP, please try again");
         }
@@ -66,7 +65,7 @@ public class OtpClientImpl implements OtpClient {
                     .body(body)
                     .retrieve()
                     .body(ClientPayloads.OtpVerification.class);
-        } catch (RestClientException | IllegalStateException ex) {
+        } catch (RuntimeException ex) {
             log.error("OTP verify failed: {}", ex.getMessage());
             throw new DownstreamUnavailableException("OTP service is unavailable, please try again");
         }
